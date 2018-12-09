@@ -42,22 +42,40 @@ func (cor *Coroutine) start() {
 					return
 				}
 
+				// 为waitingList减1
+				cor.pool.waitingDecr()
+
 				if !cor.getRunning() {
-					// Pool关闭该Coroutine，退出
+					// Pool没有关闭， 但该Coroutine关闭了
+					// 因为上面已经为waitingList减1，无需再减
 					return
 				}
 
-				<-cor.pool.waitingList
-				cor.pool.wrokingList <- working
+				// Coroutine将要取走一个任务，
+				// // 因为上面已经为waitingList减1，无需再减
+				// 为workingList加1
+				cor.pool.workingIncr()
 
 				task.Run()
 
-				if !cor.getRunning() {
+				// 再次检查pool是否被关闭(因为可能task执行了一段时间，在这段时间内pool被关闭了)
+				if cor.pool.IsClosed() {
+					// pool被关闭了，退出
+					cor.setRunning(false)
 					return
 				}
 
-				<-cor.pool.wrokingList
-				cor.pool.waitingList <- waiting
+				// task 执行完，要为workingList减1
+				cor.pool.workingDecr()
+
+				// 再次检查Coroutine是否被关闭(因为可能task执行了一段时间，在这段时间内Coroutine被Pool关闭了)
+				if !cor.getRunning() {
+					// 如果关闭了，就不需要为waitingList加1了
+					return
+				}
+
+				// 为waitingList加1
+				cor.pool.waitingIncr()
 
 			case <-cor.pool.exitAllChan:
 				cor.setRunning(false)

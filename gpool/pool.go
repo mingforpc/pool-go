@@ -14,7 +14,7 @@ type Pool struct {
 
 	taskBenc chan Task // 任务分配，无缓存channel
 
-	wrokingList chan int // 用来统计正在执行task的Coroutine数量
+	workingList chan int // 用来统计正在执行task的Coroutine数量
 	waitingList chan int // 用来统计正在等待task的Coroutine数量
 
 	coros []*Coroutine
@@ -39,7 +39,7 @@ func NewPool(initSize, maxSize int) *Pool {
 func (pool *Pool) Serv() {
 
 	pool.taskBenc = make(chan Task)
-	pool.wrokingList = make(chan int, pool.maxSize)
+	pool.workingList = make(chan int, pool.maxSize)
 	pool.waitingList = make(chan int, pool.maxSize)
 	pool.exitAllChan = make(chan int)
 
@@ -110,7 +110,7 @@ func (pool *Pool) Close() {
 		pool.coros = nil
 
 		close(pool.waitingList)
-		close(pool.wrokingList)
+		close(pool.workingList)
 	})
 }
 
@@ -127,9 +127,39 @@ func (pool *Pool) IsClosed() bool {
 
 // 获取当前已经启动了的Coroutine数量(正在执行任务 + 等待任务)
 func (pool *Pool) GetCorosCount() int {
-	count := len(pool.waitingList) + len(pool.wrokingList)
+	count := len(pool.waitingList) + len(pool.workingList)
 	return count
 }
 
-// waitinglist 加减1
-// workinglist 加减1
+// waitinglist 加1
+func (pool *Pool) waitingIncr() {
+
+	if len(pool.waitingList) < pool.maxSize {
+		pool.waitingList <- waiting
+	}
+
+}
+
+// waitinglist 减1
+func (pool *Pool) waitingDecr() {
+
+	if len(pool.waitingList) > 0 {
+		<-pool.waitingList
+	}
+
+}
+
+// workinglist 加1
+func (pool *Pool) workingIncr() {
+	if len(pool.workingList) < pool.maxSize {
+		pool.workingList <- working
+	}
+}
+
+// workinglist 减1
+func (pool *Pool) workingDecr() {
+	if len(pool.workingList) > 0 {
+		<-pool.workingList
+	}
+
+}
