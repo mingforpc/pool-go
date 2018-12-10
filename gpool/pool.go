@@ -1,7 +1,9 @@
 package gpool
 
 import (
+	"fmt"
 	"sync"
+	"time"
 )
 
 const working = 1
@@ -12,7 +14,8 @@ type Pool struct {
 	initSize int // 初始化时的Coroutine数量
 	maxSize  int // 最大Coroutine数量
 
-	taskBenc chan Task // 任务分配，无缓存channel
+	taskBencSize int       // 分发task的channel大小，默认大小为1
+	taskBenc     chan Task // 任务分配队列，channel
 
 	workingList chan int // 用来统计正在执行task的Coroutine数量
 	waitingList chan int // 用来统计正在等待task的Coroutine数量
@@ -23,14 +26,32 @@ type Pool struct {
 
 	lock sync.Mutex
 
-	once       sync.Once        // 用来执行关闭操作的
+	closeOnce  sync.Once        // 用来执行关闭操作的
 	closedSign chan interface{} // 用来判断池是否已经关闭
+
+	ratio       float64 // 计算 （空闲/已开启的Coroutine数量） 的值，当值大于ratio，则关闭空闲的Coroutine
+	watchSecond int     // 监控的秒数
 }
 
 // 新建池
-func NewPool(initSize, maxSize int) *Pool {
+func NewPool(initSize, maxSize, taskBencSize int) *Pool {
 
-	pool := &Pool{initSize: initSize, maxSize: maxSize}
+	pool := &Pool{initSize: initSize, maxSize: maxSize, taskBencSize: taskBencSize}
+
+	return pool
+}
+
+func NewFlexiblePool(initSize, maxSize, taskBencSize int, ratio float64, watchSecond int) *Pool {
+
+	if watchSecond < 0 {
+		watchSecond = 5
+	}
+
+	if ratio <= 0 || ratio > 1 {
+		ratio = 0.5
+	}
+
+	pool := &Pool{initSize: initSize, maxSize: maxSize, taskBencSize: taskBencSize, ratio: ratio, watchSecond: watchSecond}
 
 	return pool
 }
@@ -38,7 +59,11 @@ func NewPool(initSize, maxSize int) *Pool {
 // 初始化Coroutine等操作
 func (pool *Pool) Serv() {
 
-	pool.taskBenc = make(chan Task)
+	if pool.taskBencSize <= 0 {
+		pool.taskBencSize = 0
+	}
+
+	pool.taskBenc = make(chan Task, pool.taskBencSize)
 	pool.workingList = make(chan int, pool.maxSize)
 	pool.waitingList = make(chan int, pool.maxSize)
 	pool.exitAllChan = make(chan int)
@@ -47,6 +72,14 @@ func (pool *Pool) Serv() {
 
 	for i := 0; i < pool.initSize; i++ {
 		pool.addCoro()
+	}
+
+	if pool.ratio > 0 {
+		// 一个监控（空闲/工作）比例的 Task,
+		watcherLimiter := time.Tick(time.Duration(pool.watchSecond) * time.Second)
+		cl := NewCoroutineLimiter(watcherLimiter, pool)
+
+		pool.Run(cl)
 	}
 
 }
@@ -93,7 +126,7 @@ func (pool *Pool) Run(task Task) error {
 
 // 关闭池，由于goroutine的原因，无法强制正在执行的Task，只有等task完成，goroutine才会退出
 func (pool *Pool) Close() {
-	pool.once.Do(func() {
+	pool.closeOnce.Do(func() {
 		pool.lock.Lock()
 		defer pool.lock.Unlock()
 
@@ -162,4 +195,20 @@ func (pool *Pool) workingDecr() {
 		<-pool.workingList
 	}
 
+}
+
+func (pool *Pool) getCurrentRatio() float64 {
+
+	var result float64
+
+	workingLen := float64(len(pool.workingList))
+	if pool.ratio > 0 {
+		// 因为radio监视器会占用一个Coroutine
+		workingLen += 1
+	}
+	waitingLen := float64(len(pool.waitingList))
+	fmt.Printf("workingLen:[%f], waitingLen:[%f]\n", workingLen, waitingLen)
+	result = waitingLen / (waitingLen + workingLen)
+
+	return result
 }
