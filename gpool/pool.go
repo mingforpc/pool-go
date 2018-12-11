@@ -1,214 +1,50 @@
 package gpool
 
-import (
-	"fmt"
-	"sync"
-	"time"
-)
-
-const working = 1
-const waiting = 0
-
 // 池, 需要支持新建时只启动部分Coroutine
 type Pool struct {
-	initSize int // 初始化时的Coroutine数量
-	maxSize  int // 最大Coroutine数量
+	size int
 
-	taskBencSize int       // 分发task的channel大小，默认大小为1
-	taskBenc     chan Task // 任务分配队列，channel
+	taskChan chan Task
 
-	workingList chan int // 用来统计正在执行task的Coroutine数量
-	waitingList chan int // 用来统计正在等待task的Coroutine数量
-
-	coros []*Coroutine
-
-	exitAllChan chan int // 通知所有oroutine退出的channel
-
-	lock sync.Mutex
-
-	closeOnce  sync.Once        // 用来执行关闭操作的
-	closedSign chan interface{} // 用来判断池是否已经关闭
-
-	ratio       float64 // 计算 （空闲/已开启的Coroutine数量） 的值，当值大于ratio，则关闭空闲的Coroutine
-	watchSecond int     // 监控的秒数
+	closeChan chan int
 }
 
-// 新建池
-func NewPool(initSize, maxSize, taskBencSize int) *Pool {
-
-	pool := &Pool{initSize: initSize, maxSize: maxSize, taskBencSize: taskBencSize}
-
-	return pool
-}
-
-func NewFlexiblePool(initSize, maxSize, taskBencSize int, ratio float64, watchSecond int) *Pool {
-
-	if watchSecond < 0 {
-		watchSecond = 5
-	}
-
-	if ratio <= 0 || ratio > 1 {
-		ratio = 0.5
-	}
-
-	pool := &Pool{initSize: initSize, maxSize: maxSize, taskBencSize: taskBencSize, ratio: ratio, watchSecond: watchSecond}
-
-	return pool
-}
-
-// 初始化Coroutine等操作
 func (pool *Pool) Serv() {
 
-	if pool.taskBencSize <= 0 {
-		pool.taskBencSize = 0
-	}
+	pool.taskChan = make(chan Task, pool.size)
 
-	pool.taskBenc = make(chan Task, pool.taskBencSize)
-	pool.workingList = make(chan int, pool.maxSize)
-	pool.waitingList = make(chan int, pool.maxSize)
-	pool.exitAllChan = make(chan int)
-
-	pool.closedSign = make(chan interface{}, 1)
-
-	for i := 0; i < pool.initSize; i++ {
-		pool.addCoro()
-	}
-
-	if pool.ratio > 0 {
-		// 一个监控（空闲/工作）比例的 Task,
-		watcherLimiter := time.Tick(time.Duration(pool.watchSecond) * time.Second)
-		cl := NewCoroutineLimiter(watcherLimiter, pool)
-
-		pool.Run(cl)
-	}
+	go pool.distribute()
 
 }
 
-// 往池中添加Coroutine
-func (pool *Pool) addCoro() error {
+func (pool *Pool) distribute() {
 
-	pool.lock.Lock()
-	defer pool.lock.Unlock()
+	for {
 
-	if pool.IsClosed() {
-		return CLOSE_ERR
-	}
+		select {
+		case task, ok := <-pool.taskChan:
 
-	coro := newCoroutine(pool)
+			if !ok {
+				return
+			}
 
-	if pool.GetCorosCount() < pool.maxSize {
+			cor := NewCoroutine(task)
 
-		pool.coros = append(pool.coros, coro)
-		pool.waitingList <- waiting
-		coro.start()
-	}
+			go cor.Start()
 
-	return nil
-}
-
-// 将任务分发给Coroutine
-func (pool *Pool) Run(task Task) error {
-
-	if pool.IsClosed() {
-		return CLOSE_ERR
-	}
-
-	if len(pool.waitingList) == 0 && pool.GetCorosCount() < pool.maxSize {
-		// 如果已经没有空闲的Coroutine，而且池中创建的Coroutine数量没有超过最大限制
-		// 则创建一个新的Coroutine加入到池
-		pool.addCoro()
-	}
-
-	pool.taskBenc <- task
-
-	return nil
-}
-
-// 关闭池，由于goroutine的原因，无法强制正在执行的Task，只有等task完成，goroutine才会退出
-func (pool *Pool) Close() {
-	pool.closeOnce.Do(func() {
-		pool.lock.Lock()
-		defer pool.lock.Unlock()
-
-		pool.closedSign <- nil
-
-		close(pool.exitAllChan)
-
-		idleCoros := pool.coros
-
-		for i, coro := range idleCoros {
-			coro.setRunning(false)
-			idleCoros[i] = nil
+		case <-pool.closeChan:
+			return
 		}
-		pool.coros = nil
 
-		close(pool.waitingList)
-		close(pool.workingList)
-	})
-}
-
-// 判断池是否已经关闭
-func (pool *Pool) IsClosed() bool {
-
-	if len(pool.closedSign) > 0 {
-		return true
-	} else {
-		return false
 	}
 
 }
 
-// 获取当前已经启动了的Coroutine数量(正在执行任务 + 等待任务)
-func (pool *Pool) GetCorosCount() int {
-	count := len(pool.waitingList) + len(pool.workingList)
-	return count
-}
+func (pool *Pool) Run(runnable Runnable) Task {
 
-// waitinglist 加1
-func (pool *Pool) waitingIncr() {
+	task := NewTask(runnable)
 
-	if len(pool.waitingList) < pool.maxSize {
-		pool.waitingList <- waiting
-	}
+	pool.taskChan <- task
 
-}
-
-// waitinglist 减1
-func (pool *Pool) waitingDecr() {
-
-	if len(pool.waitingList) > 0 {
-		<-pool.waitingList
-	}
-
-}
-
-// workinglist 加1
-func (pool *Pool) workingIncr() {
-	if len(pool.workingList) < pool.maxSize {
-		pool.workingList <- working
-	}
-}
-
-// workinglist 减1
-func (pool *Pool) workingDecr() {
-	if len(pool.workingList) > 0 {
-		<-pool.workingList
-	}
-
-}
-
-func (pool *Pool) getCurrentRatio() float64 {
-
-	var result float64
-
-	workingLen := float64(len(pool.workingList))
-	if pool.ratio > 0 {
-		// 因为radio监视器会占用一个Coroutine
-		workingLen += 1
-	}
-	waitingLen := float64(len(pool.waitingList))
-	fmt.Printf("workingLen:[%f], waitingLen:[%f]\n", workingLen, waitingLen)
-	result = waitingLen / (waitingLen + workingLen)
-
-	return result
+	return task
 }
