@@ -6,12 +6,15 @@ type Pool struct {
 
 	taskChan chan Task
 
+	closed bool
+
 	closeChan chan int
 }
 
 func (pool *Pool) Serv() {
 
 	pool.taskChan = make(chan Task, pool.size)
+	pool.closeChan = make(chan int)
 
 	go pool.distribute()
 
@@ -19,7 +22,7 @@ func (pool *Pool) Serv() {
 
 func (pool *Pool) distribute() {
 
-	for {
+	for !pool.closed {
 
 		select {
 		case task, ok := <-pool.taskChan:
@@ -40,11 +43,22 @@ func (pool *Pool) distribute() {
 
 }
 
-func (pool *Pool) Run(runnable Runnable) Task {
+func (pool *Pool) Run(runnable Runnable) (*Task, error) {
 
+	if pool.closed {
+		return nil, ERR_POOL_COSED
+	}
 	task := NewTask(runnable)
 
 	pool.taskChan <- task
 
-	return task
+	return &task, nil
+
+}
+
+func (pool *Pool) Close() {
+	pool.closed = true
+	close(pool.closeChan)
+	close(pool.taskChan)
+
 }

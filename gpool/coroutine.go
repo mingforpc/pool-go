@@ -1,6 +1,8 @@
 package gpool
 
-const DONE = 1
+import (
+	"fmt"
+)
 
 // 协程
 type Coroutine struct {
@@ -17,6 +19,8 @@ func NewCoroutine(task Task) Coroutine {
 
 func (cor *Coroutine) Start() {
 
+	defer cor.corRecover()
+
 	task := cor.task
 
 	val := task.runnable.Run()
@@ -26,4 +30,15 @@ func (cor *Coroutine) Start() {
 	task.done <- result
 
 	close(task.done)
+}
+
+func (cor *Coroutine) corRecover() {
+	if err := recover(); err != nil {
+		fmt.Println(err)
+		result := NewReuslt(DONE, nil)
+
+		cor.task.done <- result
+
+		close(cor.task.done)
+	}
 }
