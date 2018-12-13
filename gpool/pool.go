@@ -4,16 +4,20 @@ package gpool
 type Pool struct {
 	size int
 
-	taskChan chan Task
+	taskChan chan *Task
 
 	closed bool
 
 	closeChan chan int
 }
 
+func NewPool(size int) Pool {
+	return Pool{size: size}
+}
+
 func (pool *Pool) Serv() {
 
-	pool.taskChan = make(chan Task, pool.size)
+	pool.taskChan = make(chan *Task, pool.size)
 	pool.closeChan = make(chan int)
 
 	go pool.distribute()
@@ -52,7 +56,7 @@ func (pool *Pool) Run(runnable Runnable) (*Task, error) {
 
 	pool.taskChan <- task
 
-	return &task, nil
+	return task, nil
 
 }
 

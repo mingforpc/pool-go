@@ -2,6 +2,7 @@ package gpool
 
 import (
 	"errors"
+	"sync"
 )
 
 const DONE = 1
@@ -16,41 +17,57 @@ type Runnable interface {
 
 // 返回值
 type Result struct {
-	status int
-	runRes interface{}
+	Status int
+	RunRes interface{}
 }
 
 func NewReuslt(status int, runRes interface{}) Result {
-	return Result{status: status, runRes: runRes}
+	return Result{Status: status, RunRes: runRes}
 }
 
 // 任务对象
 type Task struct {
 	runnable Runnable
-	done     chan Result
+	done     chan *Result
 	result   *Result
+
+	resultLock sync.RWMutex
 }
 
-func NewTask(runnable Runnable) Task {
+func NewTask(runnable Runnable) *Task {
 
-	task := Task{runnable: runnable, done: make(chan Result, 1)}
+	task := &Task{runnable: runnable, done: make(chan *Result, 1)}
 	return task
 }
 
-func (task *Task) Done() Result {
+func (task *Task) Done() *Result {
 	result, _ := <-task.done
-	task.result = &result
+
 	return result
 }
 
 func (task *Task) IsDone() bool {
-	if task.result == nil {
-		return false
-	} else {
-		return true
+	done := false
+	task.resultLock.RLock()
+	if task.result != nil {
+		done = true
 	}
+	task.resultLock.RUnlock()
+
+	return done
 }
 
 func (task *Task) Result() *Result {
-	return task.result
+
+	task.resultLock.RLock()
+	result := task.result
+	task.resultLock.RUnlock()
+
+	return result
+}
+
+func (task *Task) setResult(result *Result) {
+	task.resultLock.Lock()
+	task.result = result
+	task.resultLock.Unlock()
 }

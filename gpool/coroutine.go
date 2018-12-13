@@ -8,10 +8,10 @@ import (
 type Coroutine struct {
 
 	// 分配得到的任务
-	task Task
+	task *Task
 }
 
-func NewCoroutine(task Task) Coroutine {
+func NewCoroutine(task *Task) Coroutine {
 
 	return Coroutine{task: task}
 
@@ -27,17 +27,20 @@ func (cor *Coroutine) Start() {
 
 	result := NewReuslt(DONE, val)
 
-	task.done <- result
+	task.setResult(&result)
 
+	task.done <- &result
 	close(task.done)
+
 }
 
 func (cor *Coroutine) corRecover() {
 	if err := recover(); err != nil {
 		fmt.Println(err)
-		result := NewReuslt(DONE, nil)
+		result := NewReuslt(EXCEPT, nil)
 
-		cor.task.done <- result
+		cor.task.setResult(&result)
+		cor.task.done <- &result
 
 		close(cor.task.done)
 	}
