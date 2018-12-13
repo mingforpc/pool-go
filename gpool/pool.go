@@ -15,6 +15,7 @@ func NewPool(size int) Pool {
 	return Pool{size: size}
 }
 
+// 初始化需要的channel，和开启一个分发Task的goroutine
 func (pool *Pool) Serv() {
 
 	pool.taskChan = make(chan *Task, pool.size)
