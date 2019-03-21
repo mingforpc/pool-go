@@ -4,28 +4,30 @@ import (
 	"fmt"
 )
 
-// 协程
-type Coroutine struct {
+// Goroutine 封装的go
+type Goroutine struct {
 
 	// 分配得到的任务
 	task *Task
 }
 
-func NewCoroutine(task *Task) Coroutine {
+// NewGoroutine 创建一个NewGoroutine
+func NewGoroutine(task *Task) Goroutine {
 
-	return Coroutine{task: task}
+	return Goroutine{task: task}
 
 }
 
-func (cor *Coroutine) Start() {
+// Start 开始执行
+func (cor *Goroutine) Start() {
 
 	defer cor.corRecover()
 
 	task := cor.task
 
-	val := task.runnable.Run()
+	val, err := task.runnable.Run(task.ctx, task.args)
 
-	result := NewReuslt(DONE, val)
+	result := NewReuslt(TaskDone, val, err)
 
 	task.setResult(&result)
 
@@ -34,10 +36,10 @@ func (cor *Coroutine) Start() {
 
 }
 
-func (cor *Coroutine) corRecover() {
+func (cor *Goroutine) corRecover() {
 	if err := recover(); err != nil {
-		fmt.Println(err)
-		result := NewReuslt(EXCEPT, nil)
+
+		result := NewReuslt(TaskExcept, nil, fmt.Errorf("%+v", err))
 
 		cor.task.setResult(&result)
 		cor.task.done <- &result

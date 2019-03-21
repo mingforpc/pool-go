@@ -1,6 +1,8 @@
 package gpool
 
-// 池, 需要支持新建时只启动部分Coroutine
+import "context"
+
+// Pool 池, 需要支持新建时只启动部分Coroutine
 type Pool struct {
 	size int
 
@@ -11,11 +13,12 @@ type Pool struct {
 	closeChan chan int
 }
 
+// NewPool 新建一个Pool
 func NewPool(size int) Pool {
 	return Pool{size: size}
 }
 
-// 初始化需要的channel，和开启一个分发Task的goroutine
+// Serv 初始化需要的channel，和开启一个分发Task的goroutine
 func (pool *Pool) Serv() {
 
 	pool.taskChan = make(chan *Task, pool.size)
@@ -36,7 +39,7 @@ func (pool *Pool) distribute() {
 				return
 			}
 
-			cor := NewCoroutine(task)
+			cor := NewGoroutine(task)
 
 			go cor.Start()
 
@@ -48,12 +51,13 @@ func (pool *Pool) distribute() {
 
 }
 
-func (pool *Pool) Run(runnable Runnable) (*Task, error) {
+// Run run a runnable
+func (pool *Pool) Run(runnable Runnable, args ...interface{}) (*Task, error) {
 
 	if pool.closed {
 		return nil, ERR_POOL_COSED
 	}
-	task := NewTask(runnable)
+	task := NewTask(runnable, args)
 
 	pool.taskChan <- task
 
@@ -61,6 +65,23 @@ func (pool *Pool) Run(runnable Runnable) (*Task, error) {
 
 }
 
+// RunFunc run function
+func (pool *Pool) RunFunc(runFun func(ctx context.Context, args ...interface{}) (interface{}, error), args ...interface{}) (*Task, error) {
+
+	if pool.closed {
+		return nil, ERR_POOL_COSED
+	}
+
+	runnable := &funcRunnable{runFun: runFun}
+	task := NewTask(runnable, args)
+
+	pool.taskChan <- task
+
+	return task, nil
+
+}
+
+// Close 关闭所有
 func (pool *Pool) Close() {
 	pool.closed = true
 	close(pool.closeChan)
