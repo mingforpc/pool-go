@@ -2,6 +2,7 @@ package gpool
 
 import (
 	"fmt"
+	"log"
 )
 
 // Goroutine 封装的go
@@ -45,5 +46,7 @@ func (cor *Goroutine) corRecover() {
 		cor.task.done <- &result
 
 		close(cor.task.done)
+
+		log.Panic(err)
 	}
 }

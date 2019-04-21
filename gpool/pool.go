@@ -1,6 +1,8 @@
 package gpool
 
-import "context"
+import (
+	"context"
+)
 
 // Pool 池, 需要支持新建时只启动部分Coroutine
 type Pool struct {
@@ -34,7 +36,6 @@ func (pool *Pool) distribute() {
 
 		select {
 		case task, ok := <-pool.taskChan:
-
 			if !ok {
 				return
 			}
